@@ -10,10 +10,17 @@
 (define-constant ERR-PROPOSAL-VETOED (err u107))
 (define-constant ERR-INSUFFICIENT-VETO-POWER (err u108))
 (define-constant ERR-ALREADY-VETOED (err u109))
+(define-constant ERR-INVALID-TITLE (err u110))
+(define-constant ERR-INVALID-DESCRIPTION (err u111))
+(define-constant ERR-INVALID-SUPPLY (err u112))
+(define-constant ERR-ZERO-ADDRESS (err u113))
 
 ;; Constants
 (define-constant VETO_THRESHOLD u750) ;; 75% of total supply needed for community veto
 (define-constant COUNCIL_VETO_THRESHOLD u2) ;; Number of council members needed for veto
+(define-constant MAX_TITLE_LENGTH u50)
+(define-constant MAX_DESCRIPTION_LENGTH u500)
+(define-constant CONTRACT_OWNER tx-sender)
 
 ;; Data Maps
 (define-map proposals
@@ -60,6 +67,30 @@
 (define-data-var token-name (string-ascii 32) "ChainChoice")
 (define-data-var token-symbol (string-ascii 10) "CHC")
 (define-data-var total-supply uint u0)
+(define-data-var contract-initialized bool false)
+
+;; Private functions
+(define-private (is-valid-title (title (string-ascii 50)))
+    (and
+        (not (is-eq title ""))
+        (<= (len title) MAX_TITLE_LENGTH)
+    )
+)
+
+(define-private (is-valid-description (description (string-ascii 500)))
+    (and
+        (not (is-eq description ""))
+        (<= (len description) MAX_DESCRIPTION_LENGTH)
+    )
+)
+
+(define-private (is-valid-principal (address principal))
+    (not (is-eq address (as-contract tx-sender)))
+)
+
+(define-private (check-is-owner)
+    (ok (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR-NOT-AUTHORIZED))
+)
 
 ;; Read-only functions
 (define-read-only (get-proposal (proposal-id uint))
@@ -96,6 +127,8 @@
             (start-block block-height)
             (end-block (+ block-height duration))
         )
+        (asserts! (is-valid-title title) ERR-INVALID-TITLE)
+        (asserts! (is-valid-description description) ERR-INVALID-DESCRIPTION)
         (asserts! (> duration u0) ERR-INVALID-VOTE-AMOUNT)
         (map-set proposals
             {proposal-id: proposal-id}
@@ -258,7 +291,8 @@
 
 (define-public (add-council-member (member principal))
     (begin
-        (asserts! (is-council-member tx-sender) ERR-NOT-AUTHORIZED)
+        (try! (check-is-owner))
+        (asserts! (is-valid-principal member) ERR-ZERO-ADDRESS)
         (map-set council-members member true)
         (ok true)
     )
@@ -266,7 +300,8 @@
 
 (define-public (remove-council-member (member principal))
     (begin
-        (asserts! (is-council-member tx-sender) ERR-NOT-AUTHORIZED)
+        (try! (check-is-owner))
+        (asserts! (is-valid-principal member) ERR-ZERO-ADDRESS)
         (map-set council-members member false)
         (ok true)
     )
@@ -275,6 +310,11 @@
 ;; Initialize contract
 (define-public (initialize-contract (initial-council-member principal) (initial-supply uint))
     (begin
+        (asserts! (not (var-get contract-initialized)) ERR-NOT-AUTHORIZED)
+        (asserts! (> initial-supply u0) ERR-INVALID-SUPPLY)
+        (asserts! (is-valid-principal initial-council-member) ERR-ZERO-ADDRESS)
+        
+        (var-set contract-initialized true)
         (var-set proposal-count u0)
         (var-set total-supply initial-supply)
         (map-set council-members initial-council-member true)
